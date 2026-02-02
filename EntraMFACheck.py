@@ -128,7 +128,12 @@ def ropc_request(tenant, username, password, resource, client_id, proxies):
     }
     try:
         return requests.post(url, data=data, headers=headers, verify=False, proxies=proxies, timeout=15)
-    except Exception:
+    except requests.exceptions.Timeout:
+        return "timeout"
+    except requests.exceptions.ConnectionError:
+        return "connection_error"
+    except Exception as e:
+        return f"error:{type(e).__name__}"
         return None
 
 def get_error_info(response):
@@ -192,8 +197,8 @@ def main():
     for name, url in resources.items():
         probe_id = client_ids["Microsoft Office"]
         r = ropc_request(tenant, username, password, url, probe_id, proxies)
-        if not r:
-            print(f"{YELLOW}[?] {name}: No response{RESET}")
+        if r is None or isinstance(r, str):
+            print(f"{YELLOW}[?] {name}: {r or 'No response'}{RESET}")
             continue
 
         if r.status_code == 200:
