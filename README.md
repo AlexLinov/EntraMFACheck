@@ -13,7 +13,7 @@ Identify Azure AD resources that issue tokens without MFA enforcement using the 
 
 It detects which resources return tokens **without MFA** and dumps valid access & refresh tokens for further validation (against Microsoft Graph, Outlook, OneDrive, etc.).
 
-**Authorized use only.** This tool is meant for red/purple team testing and internal security validation — not exploitation.
+**Authorized use only.** This tool is meant for red/purple team testing and internal security validation not exploitation.
 
 ---
 
