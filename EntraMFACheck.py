@@ -7,6 +7,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 RED = "\033[91m"
 GREEN = "\033[92m"
+YELLOW = "\033[93m"
 RESET = "\033[0m"
 
 USER_AGENTS = [
@@ -69,7 +70,6 @@ client_ids = {
     "Microsoft Edge2" : "ecd6b820-32c2-49b6-98a6-444530e5a77a",
     "Microsoft Edge3" : "f44b1140-bc5e-48c6-8dc0-5cf5a53c0e34",
     "Microsoft Exchange REST API Based Powershell" : "fb78d390-0c51-40cd-8e17-fdbfab77341b",
-    "Microsoft Flow Mobile PROD-GCCH-CN" : "57fcbcfa-7cee-4eb1-8b25-12d2030b4ee0",
     "Microsoft Flow" : "57fcbcfa-7cee-4eb1-8b25-12d2030b4ee0",
     "Microsoft Intune Company Portal" : "9ba1a5c7-f17a-4de9-a1f1-6178c8d51223",
     "Microsoft Intune Windows Agent" : "fc0f3af4-6835-4174-b806-f7db311fd2f3",
@@ -131,6 +131,43 @@ def ropc_request(tenant, username, password, resource, client_id, proxies):
     except Exception:
         return None
 
+def get_error_info(response):
+    """Parse error response and return (error_code, short_description)"""
+    try:
+        body = response.json()
+        error = body.get("error", "unknown")
+        desc = body.get("error_description", "").split("\r\n")[0]
+        return error, desc
+    except:
+        return "unknown", f"HTTP {response.status_code}"
+
+def validate_credentials(tenant, username, password, proxies):
+    """Pre-flight check to avoid account lockouts from bad passwords"""
+    print("[*] Validating credentials...")
+    
+    resp = ropc_request(tenant, username, password, 
+                        resources["Microsoft Graph API"],
+                        client_ids["Microsoft Office"], proxies)
+    
+    if resp is None:
+        print(f"{RED}[!] No response from login endpoint. Check network/proxy.{RESET}")
+        return False
+    
+    if resp.status_code == 200:
+        print(f"{GREEN}[+] Credentials valid.{RESET}")
+        return True
+    
+    error, desc = get_error_info(resp)
+    
+    # MFA blocked the probe but creds are valid
+    if error == "interaction_required":
+        print(f"{GREEN}[+] Credentials valid (MFA blocked probe).{RESET}")
+        return True
+    
+    print(f"{RED}[!] Credential check failed: {desc}{RESET}")
+    print(f"{RED}[!] Exiting to prevent account lockout.{RESET}")
+    return False
+
 def main():
     parser = argparse.ArgumentParser(description="Azure ROPC MFA audit with token dump")
     parser.add_argument("-u", "--user", required=True, help="Username/UPN")
@@ -145,6 +182,10 @@ def main():
     tenant = args.tenant
     proxies = {"http": args.proxy, "https": args.proxy} if args.proxy else {}
 
+    # Pre-flight credential check
+    if not validate_credentials(tenant, username, password, proxies):
+        return
+
     print(f"\n[+] Scanning {len(resources)} resources for MFA enforcement...\n")
     results = {"no_mfa_resources": [], "tokens": []}
 
@@ -152,14 +193,22 @@ def main():
         probe_id = client_ids["Microsoft Office"]
         r = ropc_request(tenant, username, password, url, probe_id, proxies)
         if not r:
-            print(f"{RED}[-] {name}: MFA Required{RESET}")
+            print(f"{YELLOW}[?] {name}: No response{RESET}")
             continue
 
         if r.status_code == 200:
             print(f"{GREEN}[+] {name}: MFA Not Required (Token Issued){RESET}")
             results["no_mfa_resources"].append((name, url))
         else:
-            print(f"{RED}[-] {name}: MFA Required{RESET}")
+            error, desc = get_error_info(r)
+            if error == "interaction_required":
+                print(f"{RED}[-] {name}: MFA Required{RESET}")
+            elif error == "invalid_resource":
+                print(f"{YELLOW}[.] {name}: Invalid resource (skipped){RESET}")
+            elif error == "unauthorized_client":
+                print(f"{YELLOW}[.] {name}: Client not authorized (skipped){RESET}")
+            else:
+                print(f"{RED}[-] {name}: {error}{RESET}")
 
     if not results["no_mfa_resources"]:
         print(f"\n{RED}[!] No MFA gaps detected.{RESET}\n")
@@ -181,7 +230,7 @@ def main():
                 "client_name": cname,
                 "client_id": cid,
                 "aud": decoded.get("aud", ""),
-                "app_displayname": decoded.get("appid", ""),
+                "appid": decoded.get("appid", ""),
                 "access_token": access,
                 "refresh_token": refresh
             })
